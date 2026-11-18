@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Buncis & Langit yang Berubah — Model Simulasi + Kelayakan Tanam Open-Meteo</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="weather_data.js"></script>
+<script src="sim_engine.js"></script>
+<style>
+:root{
+  --forest:#1B4332; --canopy:#2D6A4F; --leaf:#40916C; --mint:#74C69D; --lime:#95D5B2;
+  --sky:#0284C7; --skydeep:#0369A1; --ice:#E0F2FE;
+  --amber:#D97706; --sun:#F59E0B; --warm:#FEF3C7;
+  --danger:#DC2626; --ink:#0B1F17; --paper:#F8FAFC; --surface:#FFFFFF;
+}
+html{scroll-behavior:smooth}
+body{background:var(--paper);color:#1e293b;font-size:14px;overflow-x:hidden}
+/* ---------- ambient layered background ---------- */
+#ambient{position:fixed;inset:0;z-index:-1;overflow:hidden;
+  background:linear-gradient(160deg,#F8FAFC 0%,#EFF7F1 45%,#E8F4FB 100%)}
+#ambient .blob{position:absolute;border-radius:50%;filter:blur(70px);opacity:.5;mix-blend-mode:multiply}
+#ambient .b1{width:52vw;height:52vw;left:-14vw;top:-18vw;background:radial-gradient(circle at 35% 35%,#95D5B2,#40916C00 70%);animation:drift1 34s ease-in-out infinite alternate}
+#ambient .b2{width:44vw;height:44vw;right:-12vw;top:6vh;background:radial-gradient(circle at 60% 40%,#7DD3FC,#0284C700 70%);animation:drift2 41s ease-in-out infinite alternate}
+#ambient .b3{width:38vw;height:38vw;left:26vw;bottom:-16vw;background:radial-gradient(circle at 50% 50%,#FCD34D,#D9770600 70%);opacity:.32;animation:drift3 47s ease-in-out infinite alternate}
+@keyframes drift1{to{transform:translate(9vw,7vh) scale(1.15)}}
+@keyframes drift2{to{transform:translate(-8vw,10vh) scale(.9)}}
+@keyframes drift3{to{transform:translate(-10vw,-8vh) scale(1.2)}}
+#ambient .grain{position:absolute;inset:0;opacity:.055;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E")}
+/* ---------- scrollbars in palette ---------- */
+*{scrollbar-width:thin;scrollbar-color:var(--leaf) #E2E8F0}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-track{background:#E7EFE9;border-radius:8px}
+::-webkit-scrollbar-thumb{background:linear-gradient(var(--leaf),var(--canopy));border-radius:8px;border:2px solid #E7EFE9}
+::-webkit-scrollbar-thumb:hover{background:var(--forest)}
+/* ---------- intro ---------- */
+#intro{position:fixed;inset:0;z-index:60;background:#0B1F17;transition:opacity .8s ease,transform .8s ease}
+#intro.leave{opacity:0;transform:scale(1.06);pointer-events:none}
+#introCanvas{position:absolute;inset:0;width:100%;height:100%}
+.intro-ui{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;pointer-events:none}
+.intro-ui>*{pointer-events:auto}
+.intro-eyebrow{letter-spacing:.35em;font-size:11px;color:#F0FDF6;text-transform:uppercase;opacity:0;animation:riseIn .9s .3s forwards;text-shadow:0 1px 10px rgba(6,32,22,.75),0 0 2px rgba(6,32,22,.6)}
+.intro-title{font-size:clamp(28px,5.2vw,58px);font-weight:800;color:#F0FDF4;line-height:1.08;margin:14px 0 10px;max-width:820px;text-shadow:0 4px 30px rgba(0,0,0,.45);opacity:0;animation:riseIn 1s .7s forwards}
+.intro-title em{font-style:normal;color:var(--sun)}
+.intro-sub{color:#E2E8F0;max-width:560px;font-size:14px;opacity:0;animation:riseIn 1s 1.1s forwards;text-shadow:0 1px 10px rgba(6,32,22,.7),0 0 2px rgba(6,32,22,.55)}
+#phaseChip{margin-top:18px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#052e16;background:linear-gradient(90deg,var(--lime),var(--mint));padding:6px 14px;border-radius:999px;font-weight:700;box-shadow:0 0 24px rgba(149,213,178,.45);opacity:0;animation:riseIn .8s 1.5s forwards}
+#btnEnter{margin-top:30px;position:relative;padding:16px 40px;border-radius:999px;font-weight:800;font-size:16px;color:#052e16;background:linear-gradient(120deg,var(--lime),var(--mint) 55%,#5EEAD4);box-shadow:0 10px 40px rgba(116,198,157,.45);opacity:0;animation:riseIn .9s 1.9s forwards;transition:transform .2s}
+#btnEnter:hover{transform:translateY(-3px) scale(1.03)}
+#btnEnter::after{content:"";position:absolute;inset:-6px;border-radius:999px;border:2px solid rgba(149,213,178,.6);animation:pulseRing 2.2s ease-out infinite}
+@keyframes pulseRing{0%{transform:scale(.96);opacity:.9}70%{transform:scale(1.18);opacity:0}100%{opacity:0}}
+@keyframes riseIn{from{opacity:0;transform:translateY(22px)}to{opacity:1;transform:none}}
+#btnSkip{position:absolute;right:22px;bottom:20px;color:#94A3B8;font-size:12px;text-decoration:underline;opacity:0;animation:riseIn .8s 2.4s forwards}
+#btnSkip:hover{color:#E2E8F0}
+.intro-hint{position:absolute;left:22px;bottom:20px;color:#A7B4C4;font-size:11px;opacity:0;animation:riseIn .8s 2.4s forwards;text-shadow:0 1px 6px rgba(0,0,0,.6)}
+/* ---------- header ---------- */
+#topbar{position:sticky;top:0;z-index:40;background:rgba(255,255,255,.82);backdrop-filter:blur(12px);border-bottom:1px solid #D8E5DC;box-shadow:0 6px 24px -18px rgba(27,67,50,.5)}
+.tabbtn{position:relative;transition:all .2s}
+.tabbtn.active{background:linear-gradient(120deg,var(--forest),var(--canopy));color:#fff;box-shadow:0 6px 18px -8px rgba(27,67,50,.7)}
+.tabbtn:not(.active):hover{background:#DCEFE3;transform:translateY(-1px)}
+/* ---------- reveal & cards ---------- */
+.reveal{opacity:0;transform:translateY(26px);transition:opacity .7s ease,transform .7s cubic-bezier(.2,.7,.2,1)}
+.reveal.on{opacity:1;transform:none}
+.kpi{transition:transform .18s,box-shadow .18s;border-top:3px solid var(--leaf)}
+.kpi:hover{transform:translateY(-4px);box-shadow:0 16px 34px -20px rgba(27,67,50,.55)}
+.kpi.k-sky{border-top-color:var(--sky)} .kpi.k-amber{border-top-color:var(--amber)}
+.kpi.k-red{border-top-color:var(--danger)} .kpi.k-sun{border-top-color:var(--sun)}
+.panel{background:rgba(255,255,255,.92);border:1px solid #D8E5DC;border-radius:16px;box-shadow:0 10px 30px -24px rgba(11,31,23,.5)}
+.chip{transition:all .18s;border:1px solid #CBD5E1}
+.chip:hover{transform:translateY(-2px)}
+.chip.on{background:linear-gradient(120deg,var(--forest),var(--leaf));color:#fff;border-color:var(--forest);box-shadow:0 6px 16px -8px rgba(27,67,50,.8)}
+details summary{cursor:pointer;list-style:none}
+details summary::-webkit-details-marker{display:none}
+details[open] summary{color:var(--canopy)}
+/* ---------- toasts ---------- */
+#toasts{position:fixed;right:18px;bottom:18px;z-index:70;display:flex;flex-direction:column;gap:8px;max-width:340px}
+.toast{padding:10px 14px;border-radius:12px;color:#fff;font-size:12.5px;font-weight:600;box-shadow:0 12px 30px -12px rgba(0,0,0,.5);animation:toastIn .35s cubic-bezier(.2,.9,.3,1.2);border-left:4px solid rgba(255,255,255,.6)}
+.toast.ok{background:linear-gradient(120deg,var(--canopy),var(--leaf))}
+.toast.info{background:linear-gradient(120deg,var(--skydeep),var(--sky))}
+.toast.err{background:linear-gradient(120deg,#991B1B,var(--danger))}
+.toast.out{opacity:0;transform:translateX(30px);transition:all .4s}
+@keyframes toastIn{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
+/* ---------- weather icons (CSS animated) ---------- */
+.wi{position:relative;width:44px;height:44px;flex:none}
+.wi .sun{position:absolute;inset:8px;border-radius:50%;background:radial-gradient(circle at 35% 35%,#FDE68A,var(--sun));box-shadow:0 0 18px rgba(245,158,11,.7);animation:sunPulse 3s ease-in-out infinite}
+.wi .rays{position:absolute;inset:0;animation:spin 14s linear infinite}
+.wi .rays i{position:absolute;left:50%;top:50%;width:2px;height:7px;margin:-22px 0 0 -1px;background:var(--sun);border-radius:2px;transform-origin:1px 22px}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes sunPulse{50%{transform:scale(1.08)}}
+.wi .cloud{position:absolute;left:4px;top:14px;width:30px;height:14px;background:#E2E8F0;border-radius:10px;box-shadow:8px -6px 0 -2px #F1F5F9,0 3px 8px rgba(2,132,199,.25);animation:cloudBob 4s ease-in-out infinite}
+@keyframes cloudBob{50%{transform:translateX(3px)}}
+.wi .drop{position:absolute;width:2px;height:8px;background:var(--sky);border-radius:2px;animation:fall 1s linear infinite}
+@keyframes fall{from{transform:translateY(-4px);opacity:0}30%{opacity:1}to{transform:translateY(16px);opacity:0}}
+.wi .bolt{position:absolute;left:19px;top:24px;width:8px;height:12px;background:var(--sun);clip-path:polygon(60% 0,20% 55%,50% 55%,35% 100%,85% 42%,55% 42%);animation:sunPulse 1.2s infinite}
+/* ---------- gauge ---------- */
+#gaugeArc{transition:stroke-dashoffset 1.1s cubic-bezier(.2,.8,.2,1),stroke .6s}
+/* ---------- forecast day cards ---------- */
+.daycard{transition:transform .18s,box-shadow .18s;animation:riseIn .5s backwards}
+.daycard:hover{transform:translateY(-4px);box-shadow:0 14px 30px -18px rgba(2,132,199,.6)}
+.badge{font-size:10px;font-weight:800;padding:3px 8px;border-radius:999px;letter-spacing:.04em}
+/* ---------- misc ---------- */
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:spin .7s linear infinite;vertical-align:-2px}
+.tab-anim{animation:tabIn .45s cubic-bezier(.2,.8,.2,1)}
+@keyframes tabIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+#backdrop{position:fixed;inset:0;background:rgba(11,31,23,.45);backdrop-filter:blur(2px);z-index:44;opacity:0;pointer-events:none;transition:opacity .3s}
+#backdrop.on{opacity:1;pointer-events:auto}
+@media (max-width:1023px){
+  #sidebar{position:fixed;left:0;top:0;bottom:0;z-index:45;transform:translateX(-105%);transition:transform .35s cubic-bezier(.2,.8,.2,1);box-shadow:20px 0 60px -30px rgba(0,0,0,.5);overflow-y:auto}
+  #sidebar.open{transform:none}
+}
+input[type=range]{height:6px;border-radius:6px;background:linear-gradient(90deg,var(--mint),var(--sky));appearance:none;outline:none}
+input[type=range]::-webkit-slider-thumb{appearance:none;width:18px;height:18px;border-radius:50%;background:var(--forest);border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.35);cursor:grab;transition:transform .15s}
+input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.2)}
+.num{font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div id="ambient"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div><div class="grain"></div></div>
+
+<!-- ============ INTRO CINEMATIC ============ -->
+<div id="intro">
+  <canvas id="introCanvas"></canvas>
+  <div class="intro-ui">
+    <p class="intro-eyebrow">PBL MSP 2026 · Agroklimatologi · Kab. Magelang</p>
+    <h1 class="intro-title">Menanam Buncis di Bawah <em>Langit yang Berubah</em></h1>
+    <p class="intro-sub">Satu benih, lima fase fenologi, delapan skenario iklim. Saksikan siklus tumbuhnya — lalu kendalikan sendiri iklimnya di dashboard simulasi.</p>
+    <span id="phaseChip">Fase 1 · Perkecambahan</span>
+    <button id="btnEnter">Masuk ke Dashboard Simulasi →</button>
+  </div>
+  <p class="intro-hint">Animasi prosedural: benih → vegetatif → bunga → polong → panen · gerakkan kursor untuk paralaks</p>
+  <button id="btnSkip">lewati intro ›</button>
+</div>
+
+<!-- ============ HEADER ============ -->
+<header id="topbar">
+ <div class="flex items-center gap-3 px-4 py-2.5">
+  <button id="btnSidebar" class="p-2 rounded-lg text-white shadow lg:hidden" style="background:linear-gradient(120deg,var(--forest),var(--leaf))" title="Panel kontrol">☰</button>
+  <div class="flex-1 min-w-0">
+   <h1 class="text-base md:text-lg font-extrabold leading-tight truncate" style="color:var(--forest)">Buncis <span class="italic font-medium text-slate-500">(Phaseolus vulgaris L.)</span> · Simulator Iklim</h1>
+   <p class="text-[11px] text-slate-500 truncate">Port presisi <code>Skenario_Iklim.R</code> · Magelang 450 mdpl · forecast langsung Open-Meteo</p>
+  </div>
+  <button id="btnReplay" class="hidden md:block text-xs px-3 py-1.5 rounded-lg border border-emerald-700 text-emerald-800 hover:bg-emerald-50 font-semibold" title="Putar ulang intro">▶ Intro</button>
+  <div id="statusPesan" class="text-xs font-semibold text-right max-w-[240px] truncate"></div>
+ </div>
+ <nav class="flex gap-1.5 px-4 pb-2 overflow-x-auto">
+  <button class="tabbtn active px-3 py-1.5 rounded-lg bg-slate-100 whitespace-nowrap text-xs font-semibold" data-tab="tabDash">📊 Dashboard &amp; Grafik</button>
+  <button class="tabbtn px-3 py-1.5 rounded-lg bg-slate-100 whitespace-nowrap text-xs font-semibold" data-tab="tabSens">🌡 Sensitivitas per HST</button>
+  <button class="tabbtn px-3 py-1.5 rounded-lg bg-slate-100 whitespace-nowrap text-xs font-semibold" data-tab="tabTanam">🛰 Kelayakan Tanam · Open-Meteo</button>
+  <button class="tabbtn px-3 py-1.5 rounded-lg bg-slate-100 whitespace-nowrap text-xs font-semibold" data-tab="tabTabel">🗂 Tabel &amp; Ekspor</button>
+  <button class="tabbtn px-3 py-1.5 rounded-lg bg-slate-100 whitespace-nowrap text-xs font-semibold" data-tab="tabRumus">📐 Rumus &amp; Asumsi</button>
+ </nav>
+</header>
+
+<div id="backdrop"></div>
+<div class="flex">
+<!-- ============ SIDEBAR ============ -->
+<aside id="sidebar" class="w-80 shrink-0 bg-white/95 backdrop-blur border-r border-slate-200 min-h-[calc(100vh-92px)] p-4 space-y-4">
+ <div>
+  <h2 class="font-extrabold uppercase text-[11px] tracking-widest mb-2" style="color:var(--forest)">1 · Sumber Data Cuaca</h2>
+  <label class="flex items-center gap-2 mb-1"><input type="radio" name="src" value="builtin" checked class="accent-emerald-700"> Dataset bawaan Magelang (ERA5-Land)</label>
+  <label class="flex items-center gap-2 mb-2"><input type="radio" name="src" value="upload" class="accent-emerald-700"> Unggah <code>.csv</code> / <code>.xlsx</code></label>
+  <input type="file" id="fileCuaca" accept=".csv,.xlsx,.xls" disabled class="w-full text-xs border rounded-lg p-2 bg-slate-50">
+  <p id="infoData" class="text-[11px] text-slate-500 mt-1"></p>
+ </div>
+ <div>
+  <h2 class="font-extrabold uppercase text-[11px] tracking-widest mb-2" style="color:var(--forest)">2 · Waktu &amp; Skenario</h2>
+  <label class="block mb-1 text-xs font-medium">Tanggal tanam</label>
+  <input type="date" id="tglTanam" value="2024-03-01" class="w-full border rounded-lg p-2 mb-2 focus:ring-2 focus:ring-emerald-600 outline-none">
+  <label class="block mb-1 text-xs font-medium">Skenario cepat</label>
+  <div id="chipsSken" class="grid grid-cols-4 gap-1.5 mb-2"></div>
+  <details class="border rounded-lg p-2 mb-2 bg-slate-50" open>
+   <summary class="text-xs font-bold">⚙ Skenario kustom (one-at-a-time)</summary>
+   <div class="mt-2 space-y-3">
+    <div><label class="text-xs">ΔT suhu: <b id="lblDT" class="num" style="color:var(--danger)">0.0</b> °C</label>
+     <input type="range" id="rngDT" min="0" max="4" step="0.1" value="0" class="w-full"></div>
+    <div><label class="text-xs">Faktor curah hujan: <b id="lblFCH" class="num" style="color:var(--skydeep)">1.00</b>×</label>
+     <input type="range" id="rngFCH" min="0.5" max="1.5" step="0.05" value="1" class="w-full"></div>
+   </div>
+  </details>
+  <button id="btnRun" class="w-full py-2.5 rounded-xl text-white font-extrabold shadow-lg transition hover:brightness-110 active:scale-[.98]" style="background:linear-gradient(120deg,var(--forest),var(--leaf))">▶ Jalankan Simulasi</button>
+ </div>
+ <div>
+  <h2 class="font-extrabold uppercase text-[11px] tracking-widest mb-2" style="color:var(--forest)">3 · Parameter Model</h2>
+  <button id="btnReset" class="w-full mb-2 py-1.5 rounded-lg border-2 font-bold text-xs hover:bg-emerald-50 transition" style="border-color:var(--canopy);color:var(--canopy)">↺ Reset ke Parameter Terkalibrasi Magelang</button>
+  <div id="panelParam" class="space-y-2"></div>
+ </div>
+</aside>
+
+<!-- ============ MAIN ============ -->
+<main class="flex-1 p-4 space-y-4 min-w-0">
+
+ <section id="tabDash" class="space-y-4">
+  <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3" id="kpiCards"></div>
+  <div class="panel p-4 reveal">
+   <h3 class="font-extrabold" style="color:var(--forest)">Grafik 1 — Dinamika Harian <span id="g1Judul" class="font-medium text-slate-500 text-xs"></span></h3>
+   <div class="grid md:grid-cols-2 gap-4 mt-2">
+    <div><p class="text-xs text-center font-semibold text-slate-600">Biomassa 4 Organ (g BK/m²)</p><div class="h-64"><canvas id="c1a"></canvas></div></div>
+    <div><p class="text-xs text-center font-semibold text-slate-600">Indeks Luas Daun (LAI)</p><div class="h-64"><canvas id="c1b"></canvas></div></div>
+    <div><p class="text-xs text-center font-semibold text-slate-600">Kadar Air Tanah (m³/m³) · garis KL &amp; TLP</p><div class="h-64"><canvas id="c1c"></canvas></div></div>
+    <div><p class="text-xs text-center font-semibold text-slate-600">Evapotranspirasi (mm/hari)</p><div class="h-64"><canvas id="c1d"></canvas></div></div>
+   </div>
+  </div>
+  <div class="panel p-4 reveal">
+   <h3 class="font-extrabold" style="color:var(--forest)">Grafik 2 — Produktivitas Kumulatif per HST</h3>
+   <div class="grid gap-4 mt-2">
+    <div><p class="text-xs text-center font-semibold text-slate-600">Polong Segar (ton/ha, kiri) vs Polong Kering (ton BK/ha, kanan)</p><div class="h-72"><canvas id="c2a"></canvas></div></div>
+    <div><p class="text-xs text-center font-semibold text-slate-600">Lintasan Biomassa Tiap Organ &amp; Total (ton BK/ha)</p><div class="h-72"><canvas id="c2b"></canvas></div></div>
+   </div>
+  </div>
+ </section>
+
+ <section id="tabSens" class="hidden space-y-4">
+  <div class="panel p-4 reveal">
+   <h3 class="font-extrabold" style="color:var(--forest)">Grafik 3 — Kurva Sensitivitas Iklim per HST (Polong Segar)</h3>
+   <div class="grid md:grid-cols-2 gap-4 mt-2">
+    <div><p class="text-xs text-center font-semibold text-slate-600">Kelompok Suhu (+1/+2/+3 °C)</p><div class="h-72"><canvas id="c3a"></canvas></div></div>
+    <div><p class="text-xs text-center font-semibold text-slate-600">Kelompok Curah Hujan (±10/±20%)</p><div class="h-72"><canvas id="c3b"></canvas></div></div>
+   </div>
+  </div>
+  <div class="panel p-4 reveal">
+   <h3 class="font-extrabold" style="color:var(--forest)">Grafik 4 — Perbandingan Akhir 8 Skenario <span class="text-xs font-medium text-slate-500">(garis putus = acuan BPS 7,00 ton/ha)</span></h3>
+   <div class="h-80 mt-2"><canvas id="c4"></canvas></div>
+  </div>
+ </section>
+
+ <!-- ============ TAB KELAYAKAN TANAM ============ -->
+ <section id="tabTanam" class="hidden space-y-4">
+  <div class="panel p-4 reveal">
+   <div class="flex flex-wrap items-end gap-3">
+    <div class="flex-1 min-w-[220px]">
+     <label class="text-xs font-bold block mb-1" style="color:var(--forest)">📍 Lokasi lahan buncis Anda</label>
+     <div class="flex gap-2">
+      <input id="inpCari" placeholder="Cari kota/kecamatan… mis. Magelang" class="flex-1 border rounded-lg p-2 text-xs focus:ring-2 focus:ring-sky-600 outline-none">
+      <button id="btnCari" class="px-3 py-2 rounded-lg text-white text-xs font-bold" style="background:var(--skydeep)">Cari</button>
+      <button id="btnGeo" class="px-3 py-2 rounded-lg border text-xs font-bold" style="border-color:var(--sky);color:var(--skydeep)" title="Gunakan GPS perangkat">📍 GPS</button>
+     </div>
+     <div id="hasilCari" class="mt-1 flex flex-wrap gap-1"></div>
+    </div>
+    <div><label class="text-[10px] text-slate-500 block">Lintang</label><input id="inpLat" type="number" step="0.001" value="-7.731" class="border rounded-lg p-2 w-24 text-xs num"></div>
+    <div><label class="text-[10px] text-slate-500 block">Bujur</label><input id="inpLon" type="number" step="0.001" value="110.354" class="border rounded-lg p-2 w-24 text-xs num"></div>
+    <div><label class="text-[10px] text-slate-500 block">Luas lahan buncis (ha)</label><input id="inpLuas" type="number" step="0.01" min="0.01" value="1" class="border rounded-lg p-2 w-28 text-xs num focus:ring-2 focus:ring-emerald-600 outline-none"></div>
+    <div><label class="text-[10px] text-slate-500 block">Produktivitas Anda 2024 (ton/ha)</label><input id="inpProd24" type="number" step="0.01" min="0.1" value="7.00" class="border rounded-lg p-2 w-32 text-xs num focus:ring-2 focus:ring-emerald-600 outline-none"></div>
+    <button id="btnFetch" class="px-4 py-2.5 rounded-xl text-white text-xs font-extrabold shadow-lg hover:brightness-110 active:scale-95 transition" style="background:linear-gradient(120deg,var(--skydeep),var(--sky))">⬇ Unduh Forecast 7 Hari</button>
+   </div>
+   <p id="fcStatus" class="text-[11px] text-slate-500 mt-2">Sumber: Open-Meteo (api.open-meteo.com) · tanpa API key · data diunduh langsung ke browser Anda.</p>
+  </div>
+
+  <div id="fcWrap" class="hidden space-y-4">
+   <div class="grid md:grid-cols-3 gap-4">
+    <div class="panel p-4 reveal flex items-center gap-4">
+     <div id="curIcon" class="wi"></div>
+     <div><p class="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Cuaca saat ini</p>
+      <p id="curTeks" class="text-2xl font-extrabold num" style="color:var(--skydeep)">–</p>
+      <p id="curDetail" class="text-[11px] text-slate-500"></p></div>
+    </div>
+    <div class="panel p-4 reveal flex items-center gap-4">
+     <svg width="120" height="120" viewBox="0 0 120 120" class="-my-2">
+      <circle cx="60" cy="60" r="50" fill="none" stroke="#E2E8F0" stroke-width="12"/>
+      <circle id="gaugeArc" cx="60" cy="60" r="50" fill="none" stroke="#40916C" stroke-width="12" stroke-linecap="round"
+        stroke-dasharray="314.16" stroke-dashoffset="314.16" transform="rotate(-90 60 60)"/>
+      <text id="gaugeVal" x="60" y="58" text-anchor="middle" font-size="26" font-weight="800" fill="#1B4332">0</text>
+      <text x="60" y="76" text-anchor="middle" font-size="9" fill="#64748B">SKOR /100</text>
+     </svg>
+     <div><p class="text-[10px] uppercase tracking-widest text-slate-500 font-bold">Kelayakan tanam minggu ini</p>
+      <p id="verdict" class="text-lg font-extrabold">–</p>
+      <p id="windowSaran" class="text-[11px] text-slate-500 mt-1"></p></div>
+    </div>
+    <div class="panel p-4 reveal">
+     <p class="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Catatan agronomis</p>
+     <ul id="fcNotes" class="text-[11.5px] space-y-1 list-disc ml-4 text-slate-600"></ul>
+    </div>
+   </div>
+
+   <div class="panel p-4 reveal">
+    <h3 class="font-extrabold mb-2" style="color:var(--forest)">Prakiraan 7 Hari — <span id="fcLoc" class="text-slate-500 font-medium text-xs"></span></h3>
+    <div id="dayCards" class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2"></div>
+    <div class="h-64 mt-4"><canvas id="c5"></canvas></div>
+   </div>
+
+   <div class="panel p-4 reveal">
+    <h3 class="font-extrabold" style="color:var(--forest)">Proyeksi Panen bila Tanam Hari Ini <span class="text-xs font-medium text-slate-500">(forecast 7 hari + klimatologi ERA5 lanjutan · [ASUMSI])</span></h3>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2" id="projCards"></div>
+    <p class="text-[11px] text-slate-500 mt-2">Estimasi produksi = hasil polong segar model (ton/ha) × luas lahan Anda. Pembanding: produktivitas Anda tahun 2024 × luas yang sama. Hari ke-8 dst. memakai klimatologi ERA5-Land Magelang sebagai lanjutan musim [ASUMSI].</p>
+   </div>
+
+   <div class="panel p-4 reveal">
+    <div class="flex items-center justify-between flex-wrap gap-2">
+     <h3 class="font-extrabold" style="color:var(--forest)">Tabel Forecast &amp; Skor Harian</h3>
+     <button id="btnFcCsv" class="py-1.5 px-3 rounded-lg text-white text-xs font-bold" style="background:var(--canopy)">⬇ forecast_7hari.csv</button>
+    </div>
+    <div class="overflow-x-auto mt-2 text-xs" id="tblForecast"></div>
+   </div>
+  </div>
+ </section>
+
+ <section id="tabTabel" class="hidden space-y-4">
+  <div class="panel p-4 reveal">
+   <div class="flex items-center justify-between flex-wrap gap-2">
+    <h3 class="font-extrabold" style="color:var(--forest)">Tabel Ringkasan 8 Skenario Sensitivitas</h3>
+    <button class="ekspor py-1.5 px-3 rounded-lg text-white text-xs font-bold" style="background:var(--canopy)" data-file="ringkasan">⬇ ringkasan_sensitivitas_iklim.csv</button>
+   </div>
+   <div class="overflow-x-auto mt-2 text-xs" id="tblRingkasan"></div>
+  </div>
+  <div class="panel p-4 reveal">
+   <div class="flex items-center justify-between flex-wrap gap-2">
+    <h3 class="font-extrabold" style="color:var(--forest)">Tabel Hasil Harian — <span id="judulTabelHarian" class="text-slate-500 font-medium text-xs"></span></h3>
+    <button class="ekspor py-1.5 px-3 rounded-lg text-white text-xs font-bold" style="background:var(--canopy)" data-file="harian">⬇ hasil_harian_aktif.csv</button>
+   </div>
+   <div class="overflow-auto mt-2 text-[11px] max-h-96" id="tblHarian"></div>
+  </div>
+ </section>
+
+ <section id="tabRumus" class="hidden space-y-4">
+  <div class="panel p-4 reveal">
+   <h3 class="font-extrabold mb-2" style="color:var(--forest)">Daftar Parameter, Tag Sumber &amp; Rujukan</h3>
+   <div class="overflow-x-auto text-xs" id="tblParamDoc"></div>
+  </div>
+  <div class="panel p-4 reveal">
+   <h3 class="font-extrabold mb-2" style="color:var(--forest)">Algoritma &amp; Rumus Inti (identik dengan Skenario_Iklim.R)</h3>
+   <ol class="list-decimal ml-5 space-y-3 text-[13px]">
+    <li><b>Tahap 0 — Pra-pemrosesan &amp; perturbasi:</b> kode missing BMKG (<code>-, NA, 8888, 9999</code>) → NaN; urut &amp; hapus duplikat tanggal; imputasi <i>[ASUMSI]</i> non-hujan = rerata kolom, hujan = 0 mm. Skenario: T′ = T + ΔT; CH′ = max(0, CH × faktor_CH).</li>
+    <li><b>Tahap 1 — Fenologi Thermal Unit:</b> TU<sub>hari</sub> = max(T′ − T<sub>b</sub>, 0); panen saat ΣTU ≥ 972 °C·hari (76/306/79/392/119) <i>[PUSTAKA: Dapaah et al. 1999; Skripsi IPB 2024]</i>.</li>
+    <li><b>Tahap 3a — ETo Penman-Monteith FAO-56:</b> RS dari <code>ssrd_mj</code>, fallback Angstrom-Prescott (a=0.25, b=0.50); ET<sub>c</sub> = K<sub>c</sub>(fase) × ET<sub>o</sub> <i>[PUSTAKA: Allen et al. 1998]</i>.</li>
+    <li><b>Tahap 3b-c — Neraca air:</b> intersepsi Zinke (LAI≤3: 1.0×LAI; &gt;3: 1.27 mm); limpasan 35% <i>[ASUMSI]</i>; perkolasi di atas KL×Zr; evaporasi Ritchie 2 tahap (U=12 mm, α=5.08) <i>[PUSTAKA: Ritchie 1998]</i>; WDF = T<sub>a</sub>/T<sub>m</sub>.</li>
+    <li><b>Tahap 3d — Biomassa:</b> Q<sub>int</sub> = RS(1−e<sup>−k·LAI</sup>) <i>[k=0.63 Manshuri et al. 2015]</i>; B<sub>a</sub> = RUE·Q<sub>int</sub>·WDF; R<sub>g</sub> = 0.32·B<sub>a</sub> <i>[Amthor 2000]</i>; R<sub>m</sub> = 0.031·Q₁₀·W dibatasi stok; partisi 5 fase <i>[ASUMSI]</i>.</li>
+    <li><b>Konversi hasil</b> <i>[KONVERSI]</i>: 1 g BK/m² = 0,01 ton BK/ha; segar = BK ÷ (1−0,942) <i>[Skripsi IPB 2024 hal. 21]</i>; validasi BPS Magelang 2024 = 6.400,4 ton ÷ 914 ha = 7,00 ton/ha <i>[BPS 2024]</i>.</li>
+    <li><b>Kontrol kekekalan massa:</b> |residu| air &amp; biomassa &lt; 10⁻¹² (KPI Card 6).</li>
+   </ol>
+  </div>
+  <div class="panel p-4 reveal">
+   <h3 class="font-extrabold mb-2" style="color:var(--forest)">Modul Kelayakan Tanam (Open-Meteo)</h3>
+   <ul class="list-disc ml-5 space-y-2 text-[13px]">
+    <li><b>Sumber forecast</b> <i>[PUSTAKA]</i>: Open-Meteo Forecast API (open-meteo.com, model ICON/GFS blend) — variabel harian: suhu maks/min, curah hujan, probabilitas hujan, RH rata-rata, angin 10 m, radiasi gelombang pendek, durasi penyinaran, ET₀ FAO. Geocoding: Open-Meteo Geocoding API.</li>
+    <li><b>Skor harian</b> <i>[ASUMSI]</i>: 0,45·suhu + 0,25·hujan + 0,20·RH + 0,10·angin. Suhu optimum buncis 18–26 °C (penalti linear di luar rentang; T<sub>maks</sub>&gt;32 °C dibatasi 45 — risiko gugur bunga); hujan harian ≤5 mm ideal, 5–20 mm penalti ringan, 20–40 mm penalti genangan, &gt;40 mm berat; RH optimum 60–85%; angin ≤20 km/jam (≈5,5 m/s) ideal, penalti linear di atasnya.</li>
+    <li><b>Skor mingguan</b>: rerata skor harian, dikoreksi total hujan 7 hari (&lt;10 mm: −15 defisit; 60–120 mm: −5 basah; &gt;120 mm: −12 jenuh air; &gt;150 mm: −20 genangan). Kategori: ≥80 Sangat Cocok · 60–79 Cocok · 40–59 Kurang Cocok · &lt;40 Tidak Cocok.</li>
+    <li><b>Proyeksi model</b> <i>[ASUMSI]</i>: 7 hari forecast dipetakan ke kolom model (suhu = rerata maks/min; lama = sunshine_duration/3600; angin 10 m diperlakukan setara tinggi_angin panel), lalu hari ke-8+ memakai klimatologi ERA5-Land bawaan sampai kemasakan 972 °C·hari.</li>
+    <li><b>Input pengguna</b>: luas lahan (ha) &amp; produktivitas 2024 (ton/ha) → estimasi produksi total dan selisih % terhadap capaian 2024 Anda.</li>
+   </ul>
+  </div>
+ </section>
+</main>
+</div>
+<div id="toasts"></div>
+<script src="intro.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
