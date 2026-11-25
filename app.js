@@ -8,7 +8,8 @@ const state = {
   prep: null, params: JSON.parse(JSON.stringify(P_DEFAUL)),
   tglTanam: new Date(Date.UTC(2024, 2, 1)),
   hasil: [], ringkas: [], aktifIdx: 0, custom: null, uploadRows: null,
-  fc: null, fcLoading: false
+  fc: null, fcLoading: false,
+  rescue: null, rescueHasil: null, kombList: null
 };
 const CHARTS = {};
 const WARN = 1e-12;
@@ -45,10 +46,10 @@ function currentRows() {
 /* ---------------- form parameter ---------------- */
 const PARAM_GROUPS = [
   { judul: "Lokasi & Waktu", isi: [["Lat", "Lintang (°)", -90, 90], ["Alt", "Elevasi (mdpl)", 0, 5000], ["tinggi_angin", "Tinggi angin (m)", 0.2, 25]] },
-  { judul: "Fisiologi Tanaman", isi: [["k", "Koef. pemadaman", 0, 2], ["sla", "SLA (cm²/g)", 50, 500], ["rue", "RUE (g/MJ)", 0.5, 5], ["tb", "Suhu dasar (°C)", 0, 15], ["kg", "Kg growth", 0, 1], ["km", "Km maint. (h⁻¹)", 0, 0.2], ["kadar_air_polong", "KA polong", 0.5, 0.999], ["target_bps_segar", "Acuan BPS (t/ha)", 0, 50]] },
+  { judul: "Fisiologi Tanaman", isi: [["k", "Koef. pemadaman", 0, 2], ["sla", "SLA (cm²/g)", 50, 500], ["rue", "RUE (g/MJ)", 0.5, 5], ["tb", "Suhu dasar (°C)", 0, 15], ["kg", "Kg growth", 0, 1], ["km", "Km maint. (h⁻¹)", 0, 0.2], ["kadar_air_polong", "KA polong", 0.80, 0.97], ["target_bps_segar", "Acuan BPS (t/ha)", 0, 50]] },
   { judul: "Thermal Unit per Fase (°C·hari)", isi: [["tu.0", "TU-1", 10, 600], ["tu.1", "TU-2", 10, 900], ["tu.2", "TU-3", 10, 600], ["tu.3", "TU-4", 10, 900], ["tu.4", "TU-5", 10, 600]] },
   { judul: "Kondisi Awal 1 HST", isi: [["LAI_awal", "LAI awal", 0.01, 1], ["wbatang_awal", "Batang (g/m²)", 0, 50], ["wakar_awal", "Akar (g/m²)", 0, 50]] },
-  { judul: "Tanah & Air", isi: [["KATawal", "KAT awal", 0, 0.6], ["TLP", "TLP", 0, 0.4], ["KL", "KL", 0.1, 0.6], ["Zr", "Zr (mm)", 100, 800], ["runoff_frac", "Limpasan", 0, 1], ["coef_Ic", "Koef. intersepsi", 0, 3], ["Ic_maks", "Ic maks (mm)", 0, 5], ["U", "Ritchie U (mm)", 1, 30], ["alpha", "Ritchie α", 0.5, 15], ["reset_hujan", "Reset hujan (mm)", 0.5, 20]] },
+  { judul: "Tanah & Air", isi: [["KATawal", "KAT awal", 0, 0.6], ["TLP", "TLP", 0, 0.4], ["KL", "KL", 0.1, 0.6], ["Zr", "Zr (mm)", 100, 800], ["slope_deg", "Kemiringan (°)", 0, 60], ["runoff_frac", "Limpasan", 0, 1], ["coef_Ic", "Koef. intersepsi", 0, 3], ["Ic_maks", "Ic maks (mm)", 0, 5], ["U", "Ritchie U (mm)", 1, 30], ["alpha", "Ritchie α", 0.5, 15], ["reset_hujan", "Reset hujan (mm)", 0.5, 20]] },
   { judul: "Kc per Fase", isi: [["kc_fase.0", "Kc-1", 0.2, 1.3], ["kc_fase.1", "Kc-2", 0.2, 1.3], ["kc_fase.2", "Kc-3", 0.2, 1.3], ["kc_fase.3", "Kc-4", 0.2, 1.3], ["kc_fase.4", "Kc-5", 0.2, 1.3]] }
 ];
 const getDeep = (o, p) => p.split(".").reduce((a, k) => a[k], o);
@@ -86,13 +87,18 @@ function jalankanSemua(silent) {
   const { hasil, ringkas } = jalankan8Skenario(state.prep, state.params, state.tglTanam);
   state.hasil = hasil; state.ringkas = ringkas;
   const gagal = ringkas.filter(r => r.gagal);
-  if (gagal.length === 8) { pesan("Data tidak cukup sampai kemasakan (972 °C·hari).", true); toast("Semua skenario gagal: data cuaca kurang panjang.", "err"); return; }
+  if (gagal.length === 8) {
+    pesan("Data tidak cukup sampai kemasakan (972 °C·hari).", true); toast("Semua skenario gagal: data cuaca kurang panjang.", "err");
+    if (!$("tabRescue").classList.contains("hidden")) runRescue(); else state.rescueHasil = null;
+    return;
+  }
   if (state.aktifIdx >= 8) hitungCustom();
   else if (!state.hasil[state.aktifIdx]) state.aktifIdx = ringkas.findIndex(r => !r.gagal);
   $("infoData").textContent = `${state.prep.hari.length} hari bersih · ${state.prep.ada_ssrd ? "radiasi ssrd_mj aktif" : "Angstrom dari lama penyinaran"}`;
   pesan(`Selesai · ${8 - gagal.length}/8 skenario`);
   if (!silent) toast(`Simulasi selesai: ${8 - gagal.length}/8 skenario · ${state.prep.hari.length} hari cuaca`);
   renderAll();
+  if (!$("tabRescue").classList.contains("hidden")) runRescue(); else state.rescueHasil = null;
 }
 function hitungCustom() {
   const dT = parseFloat($("rngDT").value), fCH = parseFloat($("rngFCH").value);
@@ -122,6 +128,7 @@ function renderKPI() {
     card("k-sky", "Rerata WDF", num(rk.Rerata_WDF, 3), "1 = tanpa cekaman air") +
     card(okMass ? "" : "k-red", "Kekekalan Massa", okMass ? `<span style="color:#2D6A4F">✓ VALID</span>` : `<span style="color:#DC2626">✗ CEK</span>`, `|residu| maks ${rk.maksResiduAir.toExponential(1)} mm`);
   el.querySelectorAll(".countup").forEach(countUp);
+  if (window.Growth) Growth.refresh();
 }
 
 /* ---------------- grafik ---------------- */
@@ -230,7 +237,7 @@ const PARAM_DOC = [
   ["tgl_tanam", "2024-03-01", "—", "[ASUMSI]", "Acuan musim tanam utama validasi BPS 2024."],
   ["Lat / Lon", "-7.731 / 110.354", "°", "[PUSTAKA][KONVERSI]", "Stamet DIY WMO 96851; -773100 dinormalisasi; masuk rumus dalam radian."],
   ["Alt", "450", "mdpl", "[PUSTAKA]", "Jurnal Untidar (Kab. Magelang); koreksi tekanan P pada ETo."],
-  ["slope", "26", "%", "[PUSTAKA]", "Jurnal Untidar; dasar runoff_frac."],
+  ["slope_deg", "26", "derajat (°)", "[PUSTAKA]", "Jurnal Untidar: kemiringan lahan satuan DERAJAT (26° ≈ kelandaian 48,8%), bukan persen; konteks lahan saja."],
   ["tinggi_angin", "2", "m", "[ASUMSI]", "ERA5-Land 10 m dianggap setara 2 m (dampak ke ETo ≈ 0,3%)."],
   ["k", "0.63", "—", "[PUSTAKA]", "Manshuri et al. (2015) — pemadaman cahaya tajuk buncis."],
   ["sla", "209.8", "cm²/g", "[PUSTAKA][KONVERSI]", "20.98 m²/kg × 10."],
@@ -239,11 +246,11 @@ const PARAM_DOC = [
   ["tu1..tu5", "76/306/79/392/119", "°C·hari", "[PUSTAKA]", "Dapaah et al. (1999) & Skripsi IPB (2024) Tabel 2; Σ=972."],
   ["kg / km", "0.32 / 0.031", "fraksi / hari⁻¹", "[PUSTAKA]", "Amthor (2000); respirasi pemeliharaan."],
   ["Kondisi awal", "0.15 / 6 / 3", "m²/m², g/m²", "[ASUMSI]", "Bibit berdaun 1 HST."],
-  ["kadar_air_polong", "0.942", "fraksi", "[PUSTAKA]", "Skripsi IPB (2024) hal. 21."],
+  ["kadar_air_polong", "0.942", "fraksi", "[KONVERSI][ASUMSI]", "Skripsi IPB (2024) hal. 21: kadar air polong diasumsikan konstan 94,2%; segar = BK/(1−KA). Batasan: input KA dibatasi 0,80–0,97; BK = biomassa kering oven, bukan kering angin lapangan."],
   ["target_bps_segar", "7.00", "ton/ha", "[PUSTAKA][KONVERSI]", "BPS Kab. Magelang 2024: 64.004 kw ÷ 914 ha."],
   ["KATawal / TLP / KL", "0.25 / 0.15 / 0.38", "m³/m³", "[PUSTAKA][KONVERSI]", "25% & 15% vol ÷100; KL: 242 mL/700 g × ρb 1.10."],
-  ["Zr", "300", "mm", "[PUSTAKA][ASUMSI]", "Skripsi hal. 25; konstan."],
-  ["runoff_frac", "0.35", "fraksi", "[ASUMSI]", "Lahan miring 26%."],
+  ["Zr", "300", "mm", "[ASUMSI]", "Zona akar efektif KONSTAN 300 mm dari 1 HST sampai panen — tidak ada dinamika kedalaman akar per fase; kapasitas air KL×Zr & TLP×Zr ikut konstan."],
+  ["runoff_frac", "0.35", "fraksi", "[ASUMSI]", "Fraksi limpasan TETAP 0,35 sepanjang musim (praktik petani konvensional); tidak diturunkan dari kemiringan. Varian mulsa jerami kontur (modul Penyelamatan Panen) menurunkannya ke 0,126."],
   ["coef_Ic / Ic_maks", "1.00 / 1.27", "mm", "[PUSTAKA]", "Zinke (1967) via Skripsi Pers. 8–9."],
   ["kc_fase", "0.50/0.80/1.05/1.05/0.90", "—", "[PUSTAKA][ASUMSI]", "FAO-56 (Allen et al. 1998) dipetakan 5 fase."],
   ["U / alpha / reset", "12.0 / 5.08 / 5.0", "mm, mm·hari⁻⁰·⁵", "[PUSTAKA][ASUMSI]", "Ritchie (1998) via Skripsi Pers. 12–13."],
@@ -333,6 +340,7 @@ async function fetchForecast() {
     $("fcStatus").innerHTML = `✓ Diunduh ${new Date(state.fc.fetchedAt).toLocaleString("id-ID")} · zona waktu ${j.timezone} · sumber Open-Meteo (ICON/GFS).`;
     toast("Forecast 7 hari berhasil diunduh dari Open-Meteo", "info");
     renderForecast();
+    if (state.rescue && state.rescue.sumber === "fc" && !$("tabRescue").classList.contains("hidden")) runRescue();
   } catch (e) {
     $("fcStatus").textContent = "✗ Gagal mengunduh (" + e.message + "). " + (state.fc ? "Menampilkan cache terakhir." : "Periksa koneksi internet, lalu coba lagi.");
     toast("Gagalunduh Open-Meteo: " + e.message, "err");
@@ -463,7 +471,7 @@ function exportForecast() {
 }
 
 /* ---------------- render gabungan & reveal ---------------- */
-function renderAll() { renderKPI(); renderGrafik1(); renderGrafik2(); renderGrafik3(); renderGrafik4(); renderTabel(); }
+function renderAll() { renderKPI(); renderGrafik1(); renderGrafik2(); renderGrafik3(); renderGrafik4(); renderTabel(); if (window.Growth) Growth.refresh(); }
 const io = ("IntersectionObserver" in window) ? new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) { e.target.classList.add("on"); io.unobserve(e.target); } }), { threshold: .08 }) : null;
 function observeReveals() {
   document.querySelectorAll(".reveal:not(.on)").forEach(el => {
@@ -476,6 +484,208 @@ function observeReveals() {
 }
 
 /* ---------------- binding UI ---------------- */
+/* ---------------- modul penyelamatan panen (adapt_engine.js) ---------------- */
+const RESCUE_DEFAUL = { dT: 2, fCH: 0.8, mulsa: false, dosis: 58, jadwal: "kaku_21hst", irig: false, pht: false, harga: 5000, sistem: "monokultur", sumber: "klim" };
+try { state.rescue = Object.assign({}, RESCUE_DEFAUL, JSON.parse(localStorage.getItem("buncis_rescue") || "{}")); }
+catch { state.rescue = Object.assign({}, RESCUE_DEFAUL); }
+const TUAS_KONV = { mulsa: "bekas", dosisP: 58, jadwalP: "kaku_21hst", irigasi: false, pht: false };
+const fmtRp = x => "Rp" + Math.round(x).toLocaleString("id-ID");
+const fmtTgl = d => new Date(d + "T00:00:00Z").toLocaleDateString("id-ID", { day: "numeric", month: "short", year: "numeric" });
+const tuasRescue = () => { const r = state.rescue; return { mulsa: r.mulsa ? "jerami" : "bekas", dosisP: r.dosis, jadwalP: r.jadwal, irigasi: r.irig, pht: r.pht }; };
+const simpanRescue = () => localStorage.setItem("buncis_rescue", JSON.stringify(state.rescue));
+
+function syncRescueUI() {
+  const r = state.rescue;
+  $("rngRDT").value = r.dT; $("lblRDT").textContent = "+" + r.dT.toFixed(1);
+  $("rngRFCH").value = r.fCH; $("lblRFCH").textContent = r.fCH.toFixed(2);
+  $("rngDosis").value = r.dosis; $("lblDosis").textContent = r.dosis.toFixed(1);
+  $("swMulsa").checked = r.mulsa; $("swIrig").checked = r.irig; $("swPHT").checked = r.pht;
+  document.querySelectorAll("input[name=jadwalP]").forEach(rb => rb.checked = rb.value === r.jadwal);
+  $("inpHarga").value = r.harga; $("selSistem").value = r.sistem;
+  $("chipsIklim").querySelectorAll(".chip").forEach(b => b.classList.toggle("on", +b.dataset.dt === r.dT && +b.dataset.fch === r.fCH));
+  $("chipsSumber").querySelectorAll(".chip").forEach(b => b.classList.toggle("on", b.dataset.sumber === r.sumber));
+  $("resFcInfo").classList.toggle("hidden", r.sumber !== "fc");
+  $("resSaranWrap").classList.toggle("hidden", !(r.sumber === "fc" && state.fc));
+  $("cardMulsa").classList.toggle("on", r.mulsa);
+  $("cardPupuk").classList.toggle("on", r.jadwal === "sinkron_TU76" || Math.abs(r.dosis - 97.9) < 0.05);
+  $("cardAir").classList.toggle("on", r.irig || r.pht);
+}
+
+function rescuePrep() {
+  if (state.rescue.sumber === "fc" && state.fc)
+    return { prep: preprocessWeather(rowsHybrid(state.fc)), tgl: new Date(state.fc.daily[0].date + "T00:00:00Z"), live: true };
+  return { prep: state.prep, tgl: state.tglTanam, live: false };
+}
+function saranTuas(fc) {
+  const totalRain = fc.daily.reduce((a, d) => a + d.rain, 0);
+  const panas = fc.daily.filter(d => d.tmax > 32).length;
+  const rhAvg = fc.daily.reduce((a, d) => a + d.rh, 0) / fc.daily.length;
+  const kering = totalRain < 20, basah = totalRain > 120;
+  const s = { mulsa: kering || basah || panas > 0, dosis: 97.9, jadwal: "sinkron_TU76", irig: totalRain < 25, pht: panas > 0 || (rhAvg > 85 && totalRain > 60) };
+  const alasan = [
+    `Hujan 7 hari ${totalRain.toFixed(1)} mm → mulsa jerami ${s.mulsa ? (kering ? "ON (hemat air tanah)" : basah ? "ON (tekan limpasan & erosi)" : "ON") : "OFF (air memadai, mulsa bekas cukup)"}; irigasi kritis ${s.irig ? "ON (defisit air awal musim)" : "OFF (pasokan awal cukup)"}.`,
+    `${panas} hari bersuhu maks >32 °C → ${panas ? "mulsa ON (suhu mikro −0,4 °C) + PHT hayati ON (tekanan panas)" : "tidak ada tekanan panas ekstrem"}.`,
+    `RH rerata ${rhAvg.toFixed(0)}%${rhAvg > 85 && totalRain > 60 ? " + minggu basah → PHT hayati ON (tekanan OPT)" : " → tekanan penyakit wajar"}.`,
+    `Pupuk P selalu sinkron jam biologis TU-76 dengan dosis optimum 97,9 kg/ha — musim bergeser, kalender tidak bisa dipegang.`
+  ];
+  return { s, alasan };
+}
+async function bukaRescue() {
+  if (state.rescue.sumber === "fc" && !state.fc) {
+    await fetchForecast();
+    if (!state.fc) { state.rescue.sumber = "klim"; syncRescueUI(); simpanRescue(); toast("Forecast tidak tersedia; kembali ke klimatologi 2024.", "err"); }
+  }
+  runRescue();
+}
+function runRescue() {
+  if (!state.prep) return;
+  const r = state.rescue;
+  if (r.sumber === "fc" && !state.fc) {
+    state.rescueHasil = null; state.kombList = null;
+    $("rescueKPI").innerHTML = `<div class="col-span-full text-sky-800 p-4 bg-sky-50 rounded-xl border border-sky-200 text-xs font-semibold">Forecast Open-Meteo belum tersedia. Klik "↻ Perbarui" atau kembali ke 📚 Klimatologi 2024.</div>`;
+    $("rescueMeta").innerHTML = ""; $("tblEkon").innerHTML = ""; $("tblKomb").innerHTML = ""; $("ekonDaerah").textContent = "";
+    return;
+  }
+  const { prep, tgl, live } = rescuePrep();
+  const konv = simulasiAdaptasi(prep, tgl, r.dT, r.fCH, TUAS_KONV);
+  const reko = simulasiAdaptasi(prep, tgl, r.dT, r.fCH, tuasRescue());
+  if (!konv || !reko) {
+    state.rescueHasil = null; state.kombList = null;
+    $("rescueKPI").innerHTML = `<div class="col-span-full text-red-700 p-4 bg-red-50 rounded-xl border border-red-200 text-xs font-semibold">Data cuaca tidak cukup sampai kemasakan (972 °C·hari) untuk skenario iklim ini. Geser tanggal tanam atau pakai data yang lebih panjang.</div>`;
+    $("rescueMeta").innerHTML = ""; $("tblEkon").innerHTML = ""; $("tblKomb").innerHTML = ""; $("ekonDaerah").textContent = "";
+    return;
+  }
+  const luas = Math.max(0.01, parseFloat($("inpLuas").value) || 1);
+  const ev = evaluasiAdaptasi(konv, reko, { harga: r.harga, luasHa: luas, sistem: r.sistem });
+  state.rescueHasil = { konv, reko, ev, luas, live, tgl };
+  renderRescue();
+}
+
+function renderRescue() {
+  const { konv, reko, ev, luas, live, tgl } = state.rescueHasil, r = state.rescue, m = reko.meta;
+  $("resLuas").textContent = luas;
+  $("resFcInfo").classList.toggle("hidden", !live);
+  $("resSaranWrap").classList.toggle("hidden", !(live && state.fc));
+  if (live && state.fc) {
+    $("resFcTeks").innerHTML = `Tanam = <b>${state.fc.daily[0].date}</b> (hari pertama forecast) · 7 hari live Open-Meteo ${state.fc.loc.nama} · hari ke-8+ klimatologi ERA5-Land <i>[ASUMSI]</i> · diunduh ${new Date(state.fc.fetchedAt).toLocaleString("id-ID")}. Tanggal tanam panel kiri tidak dipakai; anomali ΔT/CH berlaku di atas forecast.`;
+    $("resSaran").innerHTML = saranTuas(state.fc).alasan.map(a => `<li>${a}</li>`).join("");
+  }
+  $("rescueMeta").innerHTML = [
+    live ? `🛰 Forecast live · tanam ${fmtTgl(tgl.toISOString().slice(0, 10))}` : `📚 Klimatologi 2024 · tanam ${fmtTgl(tgl.toISOString().slice(0, 10))}`,
+    `🌱 Pupuk masuk: <b>${m.hstPupuk} HST</b> (TU ${m.tuPupuk.toFixed(0)} °C·hari)`,
+    `⏱ Faktor sinkron: <b>${m.faktorSinkron.toFixed(3)}</b>`,
+    `💧 Irigasi: <b>${m.nIrigasi}×</b> · ${m.totalIrigasi_mm.toFixed(1)} mm`,
+    `🌊 Limpasan: ${ev.runoffK.toFixed(1)} → <b>${ev.runoffR.toFixed(1)} mm</b>`,
+    `🧪 P tercuci: <b>${m.P_tercuci_kg.toFixed(1)} kg</b> · P akhir ${m.P_akhir_kg.toFixed(1)} kg/ha`
+  ].map(t => `<span class="px-2 py-1 rounded-lg bg-white border border-slate-200">${t}</span>`).join("");
+
+  const dY = (ev.yR / ev.yK - 1) * 100;
+  const card = (cls, t, valHtml, s) => `<div class="kpi ${cls} panel p-3"><p class="text-[10px] uppercase tracking-widest text-slate-500 font-bold">${t}</p><p class="text-xl font-extrabold num mt-0.5">${valHtml}</p><p class="text-[11px] text-slate-500 mt-0.5">${s}</p></div>`;
+  const num = (v, dec, suf = "") => `<span class="countup" data-to="${v}" data-dec="${dec}" data-suf="${suf}">0</span>`;
+  $("rescueKPI").innerHTML =
+    card("k-red", "Polong Segar", num(ev.yR, 2, " t/ha"), `konv ${ev.yK.toFixed(2)} t/ha · Δ ${dY >= 0 ? "+" : ""}${dY.toFixed(1)}%`) +
+    card("k-amber", `Produksi ${luas} ha`, num(ev.kgR, 0, " kg"), `konv ${Math.round(ev.kgK).toLocaleString("id-ID")} kg`) +
+    card("", "Bersih / Musim", num(ev.netR / 1e6, 2, " jt"), `konv ${fmtRp(ev.netK)} · biaya paket +${fmtRp(ev.biayaAdapt)}`) +
+    card(ev.risikoR <= ev.risikoK ? "k-sky" : "k-red", "Risiko Jatuh (MC)", num(ev.risikoR, 1, "%"), `konv ${ev.risikoK.toFixed(1)}% · ambang ${fmtRp(ev.ambang)}`) +
+    card("k-sky", "WDF Bunga–Polong", num(ev.wdfR, 3), `konv ${ev.wdfK.toFixed(3)} · 1 = tanpa cekaman`) +
+    card("", "Umur Panen", num(ev.hstR, 0, " HST"), `konv ${ev.hstK} HST · tanam ${fmtTgl(tgl.toISOString().slice(0, 10))}`);
+  $("rescueKPI").querySelectorAll(".countup").forEach(countUp);
+
+  const nMax = Math.max(konv.harian.length, reko.harian.length);
+  const labels = Array.from({ length: nMax }, (_, i) => i + 1);
+  chart("c6a", {
+    type: "line",
+    data: { labels, datasets: [
+      { label: "Konvensional", data: V(konv, "Polong_Segar_ton_ha"), borderColor: "#94A3B8", backgroundColor: "rgba(148,163,184,.15)", borderWidth: 2, pointRadius: 0, tension: .3, fill: true },
+      { label: "Paket Anda", data: V(reko, "Polong_Segar_ton_ha"), borderColor: "#2D6A4F", backgroundColor: "rgba(45,106,79,.18)", borderWidth: 2.5, pointRadius: 0, tension: .3, fill: true }
+    ] },
+    options: OPT("Polong segar (ton/ha)")
+  });
+  const o6b = OPT("WDF (0–1)");
+  o6b.scales.y1 = { position: "right", beginAtZero: true, title: { display: true, text: "Irigasi (mm)", font: { size: 10 } }, grid: { drawOnChartArea: false } };
+  chart("c6b", {
+    type: "bar",
+    data: { labels, datasets: [
+      { type: "bar", label: "Irigasi paket (mm)", data: V(reko, "Irigasi_mm"), backgroundColor: "rgba(56,189,248,.55)", yAxisID: "y1", barPercentage: 1, categoryPercentage: 1 },
+      { type: "line", label: "WDF konv", data: V(konv, "WDF"), borderColor: "#94A3B8", borderWidth: 1.5, pointRadius: 0, tension: .3 },
+      { type: "line", label: "WDF paket", data: V(reko, "WDF"), borderColor: "#2D6A4F", borderWidth: 2, pointRadius: 0, tension: .3 }
+    ] },
+    options: o6b
+  });
+
+  const baris = [
+    ["Produksi polong segar (kg)", Math.round(ev.kgK).toLocaleString("id-ID"), Math.round(ev.kgR).toLocaleString("id-ID"), (ev.kgR - ev.kgK >= 0 ? "+" : "") + Math.round(ev.kgR - ev.kgK).toLocaleString("id-ID")],
+    ["Pendapatan kotor", fmtRp(ev.kgK * r.harga), fmtRp(ev.kgR * r.harga), (ev.kgR >= ev.kgK ? "+" : "−") + fmtRp(Math.abs(ev.kgR - ev.kgK) * r.harga)],
+    ["Biaya dasar (" + (r.sistem === "monokultur" ? "monokultur" : "tumpangsari") + ")", fmtRp(ev.biayaDasar), fmtRp(ev.biayaDasar), "—"],
+    ["Biaya adaptasi (mulsa+P+irigasi)", "—", fmtRp(ev.biayaAdapt), "+" + fmtRp(ev.biayaAdapt)],
+    ["<b>Pendapatan bersih</b>", "<b>" + fmtRp(ev.netK) + "</b>", `<b style="color:${ev.netR >= ev.netK ? "#2D6A4F" : "#DC2626"}">${fmtRp(ev.netR)}</b>`, `<b style="color:${ev.netR >= ev.netK ? "#2D6A4F" : "#DC2626"}">${(ev.netR >= ev.netK ? "+" : "−") + fmtRp(Math.abs(ev.netR - ev.netK))}</b>`],
+    ["Risiko jatuh &lt; ambang (MC 500)", ev.risikoK.toFixed(1) + "%", ev.risikoR.toFixed(1) + "%", (ev.risikoR - ev.risikoK <= 0 ? "" : "+") + (ev.risikoR - ev.risikoK).toFixed(1) + " pp"],
+    ["Skenario buruk (persentil-5)", fmtRp(ev.p5K), fmtRp(ev.p5R), (ev.p5R >= ev.p5K ? "+" : "−") + fmtRp(Math.abs(ev.p5R - ev.p5K))]
+  ];
+  $("tblEkon").innerHTML = `<table class="w-full min-w-[560px]"><thead><tr class="text-left text-slate-500 border-b">
+    <th class="py-1.5 pr-2">Metrik</th><th class="py-1.5 pr-2">Konvensional</th><th class="py-1.5 pr-2">Paket Anda</th><th class="py-1.5">Selisih</th></tr></thead>
+    <tbody>${baris.map(b => `<tr class="border-b border-slate-100">${b.map((c, i) => `<td class="py-1.5 pr-2 ${i ? "num" : ""}">${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  $("ekonDaerah").innerHTML = `🏙 <b>Skalasi Kabupaten Magelang (914 ha)</b>: konvensional ${ev.daerahK.toFixed(0)} ton vs paket Anda <b>${ev.daerahR.toFixed(0)} ton</b> — kuota BPS 6.400,4 ton ${ev.kuotaTercapai ? '<b style="color:#2D6A4F">✓ tercapai</b>' : '<b style="color:#B45309">belum tercapai</b>'}.`;
+
+  state.kombList = hitungKombinasi();
+  $("tblKomb").innerHTML = `<table class="w-full min-w-[760px]"><thead><tr class="text-left text-slate-500 border-b">
+    <th class="py-1.5 pr-2">#</th><th class="py-1.5 pr-2">Mulsa</th><th class="py-1.5 pr-2">Pupuk P</th><th class="py-1.5 pr-2">Irigasi</th><th class="py-1.5 pr-2">PHT</th>
+    <th class="py-1.5 pr-2">Segar (t/ha)</th><th class="py-1.5 pr-2">Bersih (Rp)</th><th class="py-1.5 pr-2">Risiko</th><th class="py-1.5 pr-2">Δ vs konv</th><th class="py-1.5"></th></tr></thead>
+    <tbody>${state.kombList.map((k, i) => `<tr class="border-b border-slate-100 ${i === 0 ? "bg-emerald-50" : ""}">
+      <td class="py-1.5 pr-2 font-extrabold">${i + 1}</td>
+      <td class="py-1.5 pr-2">${k.mulsa ? "🌾 jerami" : "bekas"}</td>
+      <td class="py-1.5 pr-2 num">${k.dosis.toFixed(1)} kg · ${k.jadwal === "sinkron_TU76" ? "sinkron TU" : "kaku 21"}</td>
+      <td class="py-1.5 pr-2">${k.irig ? "✓" : "—"}</td><td class="py-1.5 pr-2">${k.pht ? "✓" : "—"}</td>
+      <td class="py-1.5 pr-2 num">${k.y.toFixed(2)}</td><td class="py-1.5 pr-2 num">${fmtRp(k.net)}</td>
+      <td class="py-1.5 pr-2 num">${k.risiko.toFixed(1)}%</td>
+      <td class="py-1.5 pr-2 num" style="color:${k.dNet >= 0 ? "#2D6A4F" : "#DC2626"}">${(k.dNet >= 0 ? "+" : "−") + fmtRp(Math.abs(k.dNet))}</td>
+      <td class="py-1.5"><button class="terapkan py-1 px-2 rounded-lg text-white text-[10px] font-bold" style="background:var(--canopy)" data-i="${i}">Terapkan</button></td></tr>`).join("")}</tbody></table>`;
+  $("tblKomb").querySelectorAll(".terapkan").forEach(b => b.onclick = () => terapkanKomb(state.kombList[+b.dataset.i]));
+}
+
+function hitungKombinasi() {
+  const { konv, ev, luas } = state.rescueHasil, r = state.rescue, out = [];
+  const opsiP = [{ d: 58, j: "kaku_21hst" }, { d: 97.9, j: "sinkron_TU76" }];
+  for (const mulsa of [false, true]) for (const p of opsiP) for (const irig of [false, true]) for (const pht of [false, true]) {
+    const res = simulasiAdaptasi(state.prep, state.tglTanam, r.dT, r.fCH, { mulsa: mulsa ? "jerami" : "bekas", dosisP: p.d, jadwalP: p.j, irigasi: irig, pht });
+    if (!res) continue;
+    const e = evaluasiAdaptasi(konv, res, { harga: r.harga, luasHa: luas, sistem: r.sistem });
+    out.push({ mulsa, dosis: p.d, jadwal: p.j, irig, pht, y: e.yR, net: e.netR, risiko: e.risikoR, dNet: e.netR - ev.netK });
+  }
+  out.sort((a, b) => b.net - a.net);
+  return out;
+}
+function terapkanKomb(k) {
+  Object.assign(state.rescue, { mulsa: k.mulsa, dosis: k.dosis, jadwal: k.jadwal, irig: k.irig, pht: k.pht });
+  syncRescueUI(); simpanRescue(); runRescue();
+  toast("Kombinasi peringkat diterapkan ke tuas perawatan");
+}
+
+function exportRescueHarian() {
+  if (!state.rescueHasil) { toast("Modul penyelamatan belum punya hasil.", "err"); return; }
+  const { konv, reko } = state.rescueHasil;
+  const cols = Object.keys(konv.harian[0]);
+  const lines = [["Paket", ...cols].join(",")];
+  konv.harian.forEach(h => lines.push(["konvensional", ...cols.map(c => h[c])].join(",")));
+  reko.harian.forEach(h => lines.push(["paket_anda", ...cols.map(c => h[c])].join(",")));
+  unduh("harian_konv_vs_paket.csv", lines);
+}
+function exportRescueEkon() {
+  if (!state.rescueHasil) { toast("Modul penyelamatan belum punya hasil.", "err"); return; }
+  const { ev } = state.rescueHasil;
+  const pairs = [["Polong_segar_ton_ha", "yK", "yR"], ["Produksi_kg", "kgK", "kgR"], ["Bersih_Rp", "netK", "netR"], ["Risiko_jatuh_pct", "risikoK", "risikoR"], ["p5_Rp", "p5K", "p5R"], ["Runoff_mm", "runoffK", "runoffR"], ["WDF_bunga_polong", "wdfK", "wdfR"], ["HST", "hstK", "hstR"], ["Daerah_ton", "daerahK", "daerahR"]];
+  const lines = ["Metrik,Konvensional,Paket_Anda"].concat(pairs.map(([n, a, b]) => `${n},${ev[a]},${ev[b]}`));
+  lines.push(`Biaya_dasar_Rp,${ev.biayaDasar},${ev.biayaDasar}`, `Biaya_adaptasi_Rp,0,${ev.biayaAdapt}`, `Ambang_jatuh_Rp,${ev.ambang},${ev.ambang}`);
+  const src = state.rescueHasil.live ? "forecast_live_open_meteo" : "klimatologi_2024";
+  const tglIso = state.rescueHasil.tgl.toISOString().slice(0, 10);
+  lines.push(`Sumber_cuaca,${src},${src}`, `Tanggal_tanam,${tglIso},${tglIso}`);
+  if (state.kombList) {
+    lines.push("", "Peringkat,Mulsa,DosisP_kg,Jadwal,Irigasi,PHT,Segar_ton_ha,Bersih_Rp,Risiko_pct");
+    state.kombList.forEach((k, i) => lines.push([i + 1, k.mulsa ? "jerami" : "bekas", k.dosis, k.jadwal, k.irig ? 1 : 0, k.pht ? 1 : 0, k.y.toFixed(3), Math.round(k.net), k.risiko.toFixed(1)].join(",")));
+  }
+  unduh("evaluasi_ekonomi.csv", lines);
+}
+
 function bindUI() {
   // chips skenario
   $("chipsSken").innerHTML = SCENARIOS.map((s, i) => `<button class="chip rounded-lg py-1.5 text-[11px] font-extrabold ${i === 0 ? "on" : ""}" data-i="${i}" title="${s.nama}">${s.kode}</button>`).join("") +
@@ -535,12 +745,14 @@ function bindUI() {
   document.querySelectorAll(".tabbtn").forEach(b => b.onclick = () => {
     document.querySelectorAll(".tabbtn").forEach(x => x.classList.remove("active"));
     b.classList.add("active");
-    ["tabDash", "tabSens", "tabTanam", "tabTabel", "tabRumus"].forEach(t => $(t).classList.add("hidden"));
+    ["tabDash", "tabTumbuh", "tabSens", "tabTanam", "tabRescue", "tabTabel", "tabRumus"].forEach(t => $(t).classList.add("hidden"));
     const sec = $(b.dataset.tab); sec.classList.remove("hidden"); sec.classList.remove("tab-anim");
     void sec.offsetWidth; sec.classList.add("tab-anim");
     observeReveals();
     if (b.dataset.tab === "tabTanam" && !state.fc && !state.fcLoading) fetchForecast();
     if (b.dataset.tab === "tabTanam" && state.fc) renderForecast();
+    if (b.dataset.tab === "tabRescue") bukaRescue();
+    if (b.dataset.tab === "tabTumbuh" && window.Growth) Growth.play();
     Object.values(CHARTS).forEach(c => c.resize());
   });
   // modul open-meteo
@@ -555,13 +767,163 @@ function bindUI() {
       simpanInput(); fetchForecast();
     }, () => toast("Izin lokasi ditolak / tidak tersedia.", "err"));
   };
-  ["inpLuas", "inpProd24", "inpLat", "inpLon"].forEach(id => $(id).addEventListener("input", () => { simpanInput(); if (state.fc) renderForecast(); }));
+  ["inpLuas", "inpProd24", "inpLat", "inpLon"].forEach(id => $(id).addEventListener("input", () => { simpanInput(); if (state.fc) renderForecast(); if (state.rescueHasil) runRescue(); }));
   $("btnFcCsv").onclick = exportForecast;
   $("btnReplay").onclick = () => window.Intro.show();
   window.addEventListener("intro-entered", () => {
     document.querySelectorAll("#tabDash .reveal").forEach((el, i) => setTimeout(() => el.classList.add("on"), 150 + i * 160));
     observeReveals();
   });
+  // modul penyelamatan panen
+  syncRescueUI();
+  $("chipsIklim").querySelectorAll(".chip").forEach(b => b.onclick = () => {
+    state.rescue.dT = +b.dataset.dt; state.rescue.fCH = +b.dataset.fch;
+    syncRescueUI(); simpanRescue(); runRescue();
+  });
+  let debR = 0;
+  const geserRescue = () => { clearTimeout(debR); debR = setTimeout(() => { simpanRescue(); runRescue(); }, 120); };
+  $("rngRDT").oninput = () => { state.rescue.dT = +$("rngRDT").value; syncRescueUI(); geserRescue(); };
+  $("rngRFCH").oninput = () => { state.rescue.fCH = +$("rngRFCH").value; syncRescueUI(); geserRescue(); };
+  $("rngDosis").oninput = () => { state.rescue.dosis = +$("rngDosis").value; syncRescueUI(); geserRescue(); };
+  [["swMulsa", "mulsa"], ["swIrig", "irig"], ["swPHT", "pht"]].forEach(([id, key]) => $(id).onchange = () => {
+    state.rescue[key] = $(id).checked; syncRescueUI(); simpanRescue(); runRescue();
+  });
+  document.querySelectorAll("input[name=jadwalP]").forEach(rb => rb.onchange = () => {
+    if (!rb.checked) return;
+    state.rescue.jadwal = rb.value; syncRescueUI(); simpanRescue(); runRescue();
+  });
+  $("inpHarga").oninput = () => { state.rescue.harga = Math.max(1000, +$("inpHarga").value || 5000); geserRescue(); };
+  $("selSistem").onchange = () => { state.rescue.sistem = $("selSistem").value; simpanRescue(); runRescue(); };
+  $("btnPraktik").onclick = () => {
+    Object.assign(state.rescue, { mulsa: false, dosis: 58, jadwal: "kaku_21hst", irig: false, pht: false });
+    syncRescueUI(); simpanRescue(); runRescue(); toast("Tuas kembali ke praktik petani saat ini");
+  };
+  $("btnPaket").onclick = () => {
+    Object.assign(state.rescue, { mulsa: true, dosis: 97.9, jadwal: "sinkron_TU76", irig: true, pht: true });
+    syncRescueUI(); simpanRescue(); runRescue(); toast("Paket penyuluh SLI: mulsa jerami + P sinkron TU + irigasi kritis + PHT");
+  };
+  $("btnResCsvHarian").onclick = exportRescueHarian;
+  $("btnResCsvEkon").onclick = exportRescueEkon;
+  $("chipsSumber").querySelectorAll(".chip").forEach(b => b.onclick = async () => {
+    state.rescue.sumber = b.dataset.sumber; syncRescueUI(); simpanRescue();
+    await bukaRescue();
+  });
+  $("btnResRefresh").onclick = async () => { await fetchForecast(); runRescue(); };
+  $("btnSaran").onclick = () => {
+    if (!state.fc) return;
+    const { s } = saranTuas(state.fc);
+    Object.assign(state.rescue, { mulsa: s.mulsa, dosis: s.dosis, jadwal: s.jadwal, irig: s.irig, pht: s.pht });
+    syncRescueUI(); simpanRescue(); runRescue();
+    toast("Saran otomatis dari cuaca minggu ini diterapkan ke tuas");
+  };
+}
+
+/* ---------------- showcase: progres gulir, tur booth, sambutan, layar penuh ---------------- */
+const wait = ms => new Promise(r => setTimeout(r, ms));
+const TOUR = [
+  { tab: "tabDash", sel: "#kpiCards", judul: "Enam angka kunci panen", isi: "Umur panen, polong segar & kering, kebutuhan air, stres bunga (WDF), dan kekekalan massa. Semua angka dihitung ulang otomatis setiap skenario iklim berubah — coba perhatikan saat langkah berikutnya." },
+  { tab: "tabDash", sel: "#chipsSken", judul: "Delapan skenario iklim", isi: "S1–S8 adalah port presisi Skenario_Iklim.R; ⚙ untuk kustom. Kami baru saja mengaktifkan S4 (+3 °C): lihat KPI dan grafik ikut berubah seketika. Geser tanggal tanam untuk menguji musim yang berbeda.", aksi: () => document.querySelector('#chipsSken .chip[data-i="3"]').click() },
+  { tab: "tabSens", sel: "#c3a", judul: "Sensitivitas per hari tumbuh", isi: "Kurva respons harian terhadap kenaikan suhu dan perubahan curah hujan. Di sini terlihat fase mana yang paling rentan — pengisian polong paling sensitif terhadap panas." },
+  { tab: "tabTanam", sel: "#btnFetch", judul: "Kelayakan tanam live", isi: "Unduh forecast 7 hari Open-Meteo untuk lokasi mana pun: tiap hari diberi skor kelayakan tanam buncis, plus prakiraan hasil musim ini dari luas lahan & produktivitas 2024 yang Anda isi." },
+  { tab: "tabRescue", sel: "#btnPaket", judul: "Penyelamatan panen", isi: "Bandingkan praktik petani vs paket penyuluh: mulsa jerami, pupuk P sinkron jam biologis (TU), irigasi hanya fase kritis berbunga, dan PHT. Kami baru menerapkan paket lengkap — lihat hasil dan risiko ekonominya melompat.", aksi: () => $("btnPaket").click() },
+  { tab: "tabRescue", sel: "#tblKomb", judul: "Peringkat 16 kombinasi tuas", isi: "Semua kombinasi tuas dihitung dan diurutkan berdasarkan laba bersih. Klik Terapkan pada baris mana pun untuk memindahkan kombinasi itu ke tuas aktif — pengunjung bisa bereksperimen sendiri." },
+  { tab: "tabTabel", sel: ".ekspor", judul: "Bawa pulang datanya", isi: "Seluruh hasil harian, ringkasan skenario, dan ekonomi penyelamatan bisa diekspor ke CSV. Silakan jelajahi sendiri — tombol ✨ Tur Booth selalu tersedia di atas bila ingin mengulang." },
+  { tab: "tabTumbuh", sel: "#growthCanvas", judul: "Timelapse: benih → buncis", isi: "Saksikan pertumbuhan hari demi hari dari data simulasi: akar menyebar di zona perakaran 30 cm, batang & daun tumbuh, berbunga, polong mengisi, lalu matang. Lingkungan (hujan, panas) mengikuti skenario aktif. Tekan ⏸ lalu geser timeline untuk menjelajah sendiri.", aksi: () => window.Growth.play() },
+];
+let tourIdx = -1, tourBox = null, tourBusy = false;
+function tourPos() {
+  if (tourIdx < 0 || !tourBox) return;
+  const r = tourBox.getBoundingClientRect(), s = $("tourSpot"), c = $("tourCard");
+  s.style.left = (r.left - 6) + "px"; s.style.top = (r.top - 6) + "px";
+  s.style.width = (r.width + 12) + "px"; s.style.height = (r.height + 12) + "px";
+  const cw = c.offsetWidth || 360, ch = c.offsetHeight || 190, vw = innerWidth, vh = innerHeight;
+  let left = r.right + 16;
+  if (left + cw > vw - 12) left = r.left - cw - 16;
+  if (left < 12) left = Math.min(Math.max(12, r.left), vw - cw - 12);
+  let top = r.top;
+  if (!(left + cw < r.left || left > r.right)) {
+    top = r.bottom + 14;
+    if (top + ch > vh - 12) top = r.top - ch - 14;
+  }
+  top = Math.min(Math.max(12, top), Math.max(12, vh - ch - 12));
+  c.style.left = left + "px"; c.style.top = top + "px";
+}
+async function tourGo(i) {
+  if (tourBusy) return; tourBusy = true;
+  tourIdx = i; const st = TOUR[i];
+  const el = document.querySelector(st.sel);
+  const needSidebar = innerWidth < 1024 && !!el.closest("#sidebar");
+  if (!needSidebar) { $("sidebar").classList.remove("open"); $("backdrop").classList.remove("on"); }
+  document.querySelector(`.tabbtn[data-tab="${st.tab}"]`).click();
+  await wait(520);
+  if (needSidebar) { $("sidebar").classList.add("open"); $("backdrop").classList.add("on"); await wait(380); }
+  if (st.aksi) { st.aksi(); await wait(700); }
+  tourBox = el.closest(".panel") || el;
+  tourBox.scrollIntoView({ block: "center", behavior: "smooth" });
+  await wait(480);
+  $("tourTitle").textContent = st.judul; $("tourBody").textContent = st.isi;
+  $("tourDots").innerHTML = TOUR.map((_, j) => `<span class="${j === i ? "on" : ""}"></span>`).join("");
+  $("btnTourPrev").disabled = i === 0;
+  $("btnTourNext").textContent = i === TOUR.length - 1 ? "Selesai ✓" : "Lanjut →";
+  $("tourSpot").hidden = false; $("tourCard").hidden = false;
+  tourPos(); tourBusy = false;
+}
+function tourEnd() {
+  tourIdx = -1; tourBox = null;
+  $("tourSpot").hidden = true; $("tourCard").hidden = true;
+  $("sidebar").classList.remove("open"); $("backdrop").classList.remove("on");
+}
+function bindShowcase() {
+  const w = $("welcome");
+  let sambut = true;
+  try { sambut = !sessionStorage.getItem("buncis_welcome"); } catch (e) { }
+  if (!sambut) w.remove();
+  else {
+    $("btnWelcomeClose").onclick = () => {
+      try { sessionStorage.setItem("buncis_welcome", "1"); } catch (e) { }
+      w.style.transition = "opacity .4s,transform .4s"; w.style.opacity = 0; w.style.transform = "translateY(-8px)";
+      setTimeout(() => w.remove(), 420);
+    };
+    $("btnWelcomeTour").onclick = () => tourGo(0);
+    $("btnWelcomeEkstrem").onclick = () => {
+      document.querySelector('.tabbtn[data-tab="tabDash"]').click();
+      document.querySelector('#chipsSken .chip[data-i="3"]').click();
+      $("kpiCards").scrollIntoView({ behavior: "smooth", block: "center" });
+      toast("Skenario S4 (+3 °C) aktif — KPI & grafik berubah seketika");
+    };
+    $("btnWelcomeRescue").onclick = () => {
+      document.querySelector('.tabbtn[data-tab="tabRescue"]').click();
+      setTimeout(() => $("btnPaket").click(), 650);
+    };
+  }
+  $("btnTour").onclick = () => tourGo(0);
+  $("btnTourNext").onclick = () => tourIdx >= TOUR.length - 1 ? tourEnd() : tourGo(tourIdx + 1);
+  $("btnTourPrev").onclick = () => { if (tourIdx > 0) tourGo(tourIdx - 1); };
+  $("btnTourExit").onclick = tourEnd;
+  $("btnFootReplay").onclick = () => window.Intro.show();
+  $("btnFull").onclick = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch (e) { toast("Layar penuh tidak tersedia di browser ini.", "err"); }
+  };
+  document.addEventListener("fullscreenchange", () => { $("btnFull").textContent = document.fullscreenElement ? "⛶ Normal" : "⛶ Penuh"; });
+  const onScroll = () => {
+    const h = document.documentElement, p = h.scrollTop / Math.max(1, h.scrollHeight - h.clientHeight);
+    $("scrollProg").style.width = (p * 100).toFixed(2) + "%";
+    $("topbar").classList.toggle("scrolled", h.scrollTop > 8);
+    if (tourIdx >= 0) tourPos();
+  };
+  addEventListener("scroll", onScroll, { passive: true });
+  addEventListener("resize", () => { if (tourIdx >= 0) tourPos(); });
+  document.addEventListener("keydown", e => {
+    if (tourIdx < 0) return;
+    if (e.key === "Escape") { tourEnd(); return; }
+    if (["INPUT", "SELECT", "TEXTAREA"].includes((e.target.tagName || "").toUpperCase())) return;
+    if (e.key === "ArrowRight") { e.preventDefault(); tourIdx >= TOUR.length - 1 ? tourEnd() : tourGo(tourIdx + 1); }
+    if (e.key === "ArrowLeft") { e.preventDefault(); if (tourIdx > 0) tourGo(tourIdx - 1); }
+  });
+  onScroll();
 }
 
 /* ---------------- init ---------------- */
@@ -569,9 +931,10 @@ muatInput();
 buildParamForm();
 renderDocParam();
 bindUI();
+bindShowcase();
 jalankanSemua(true);
 observeReveals();
-const HASH_TABS = { "#dashboard": "tabDash", "#sens": "tabSens", "#tanam": "tabTanam", "#tabel": "tabTabel", "#rumus": "tabRumus" };
+const HASH_TABS = { "#dashboard": "tabDash", "#tumbuh": "tabTumbuh", "#sens": "tabSens", "#tanam": "tabTanam", "#rescue": "tabRescue", "#tabel": "tabTabel", "#rumus": "tabRumus" };
 function bukaHash() {
   const t = HASH_TABS[location.hash];
   if (!t) return;

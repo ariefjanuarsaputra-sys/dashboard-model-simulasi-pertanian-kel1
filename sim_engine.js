@@ -20,7 +20,7 @@ function defaultParams() {
     kg: 0.32,               // [PUSTAKA] Amthor 2000
     km: 0.031,              // [PUSTAKA] hari^-1
     LAI_awal: 0.15, wbatang_awal: 6.0, wakar_awal: 3.0, // [ASUMSI] kondisi 1 HST
-    kadar_air_polong: 0.942, // [PUSTAKA] Skripsi IPB hal. 21
+    kadar_air_polong: 0.942, // [KONVERSI][ASUMSI] kadar air polong konstan 94,2% (Skripsi IPB hal. 21); input dibatasi 0.80-0.97
     target_bps_segar: 7.00,  // [PUSTAKA][KONVERSI] BPS 64.004 kw / 914 ha
     partisi: [               // [ASUMSI] matriks 5x4 (daun,batang,akar,polong)
       [0.42, 0.35, 0.23, 0.00],
@@ -30,8 +30,9 @@ function defaultParams() {
       [0.05, 0.05, 0.00, 0.90]
     ],
     KATawal: 0.25, TLP: 0.15, KL: 0.38, // [PUSTAKA][KONVERSI] fraksi volume
-    Zr: 300,              // [PUSTAKA][ASUMSI] mm, zona akar efektif konstan
-    runoff_frac: 0.35,    // [ASUMSI] kemiringan lahan 26%
+    Zr: 300,              // [ASUMSI] zona akar efektif KONSTAN 300 mm sepanjang simulasi (tanpa dinamika kedalaman akar per fase)
+    slope_deg: 26,        // [PUSTAKA] kemiringan lahan dalam DERAJAT (26 deg ~ kelandaian 48,8%); konteks lahan, bukan pengali runoff
+    runoff_frac: 0.35,    // [ASUMSI] fraksi limpasan TETAP 0.35 sepanjang musim (praktik konvensional); tidak diturunkan dari slope
     coef_Ic: 1.00,        // [PUSTAKA] Zinke 1967 (LAI<=3)
     Ic_maks: 1.27,        // [PUSTAKA] mm/hari (LAI>3)
     kc_fase: [0.50, 0.80, 1.05, 1.05, 0.90], // [PUSTAKA] FAO-56 5 fase
@@ -52,6 +53,31 @@ const SCENARIOS = [
   { kode: "S7", kelompok: "Hujan",    nama: "7. Curah Hujan -20%",      dT: 0.0, fCH: 0.80 },
   { kode: "S8", kelompok: "Hujan",    nama: "8. Curah Hujan +20%",      dT: 0.0, fCH: 1.20 }
 ];
+
+/* ---------- [0b] GUARD PARAMETER: batasi nilai agar biomassa/air tidak negatif ---------- */
+function sanitizeParams(params) {
+  const P = JSON.parse(JSON.stringify(params));
+  const clamp = (x, a, b) => Math.min(b, Math.max(a, isFinite(x) ? x : a));
+  // matriks partisi: fraksi wajib [0,1] dan jumlah baris = 1 (kekekalan massa biomassa)
+  P.partisi = (P.partisi || []).map((row, i) => {
+    const r = (row || []).slice(0, 4).map(v => clamp(v, 0, 1));
+    while (r.length < 4) r.push(0);
+    const sum = r.reduce((a, b) => a + b, 0);
+    return sum > 1e-9 ? r.map(v => v / sum) : defaultParams().partisi[i];
+  });
+  while (P.partisi.length < 5) P.partisi.push(defaultParams().partisi[P.partisi.length]);
+  P.partisi = P.partisi.slice(0, 5);
+  P.kadar_air_polong = clamp(P.kadar_air_polong, 0.80, 0.97); // batas fisik kadar air polong segar
+  P.runoff_frac = clamp(P.runoff_frac, 0, 1);
+  P.rue = Math.max(0, P.rue); P.sla = Math.max(1, P.sla);
+  P.Zr = Math.max(10, P.Zr); P.U = Math.max(0, P.U); P.alpha = Math.max(0, P.alpha);
+  P.kc_fase = P.kc_fase.map(v => Math.max(0, v));
+  P.tu = P.tu.map(v => Math.max(1, v));
+  P.LAI_awal = Math.max(0.01, P.LAI_awal);
+  P.KL = clamp(P.KL, 0.05, 0.6); P.TLP = clamp(P.TLP, 0.01, P.KL - 0.01);
+  P.KATawal = clamp(P.KATawal, P.TLP, P.KL);
+  return P;
+}
 
 /* ---------- [1] PRA-PEMROSESAN CUACA (Tahap 0, setara baca_data_cuaca) ---------- */
 const MISSING_TOKENS = ["", "-", "NA", "NaN", "8888", "9999", "8888.0", "9999.0"];
@@ -136,7 +162,7 @@ function dayOfYear(d) {
 }
 
 function simulasiBuncis(prep, params, tglMulai, deltaT, faktorCH) {
-  const P = params;
+  const P = sanitizeParams(params);
   // Tahap 0.5: perturbasi skenario lalu potong dari tanggal tanam
   const src = prep.hari.filter(h => h.tgl.getTime() >= tglMulai.getTime())
     .map(h => Object.assign({}, h, {
@@ -275,13 +301,13 @@ function simulasiBuncis(prep, params, tglMulai, deltaT, faktorCH) {
     for (let o = 0; o < 4; o++) {
       const alokasi = Bnet * eta[o];
       const resp = Math.min(P.km * Q10 * Wlama[o], Wlama[o] + alokasi);
-      baru[o] = Wlama[o] + alokasi - resp;
+      baru[o] = Math.max(0, Wlama[o] + alokasi - resp); // guard: stok organ tidak boleh negatif
       rmSum += resp;
     }
     daun[i] = baru[0]; batang[i] = baru[1]; akar[i] = baru[2]; polong[i] = baru[3];
     Rm[i] = rmSum;
     tot[i] = baru[0] + baru[1] + baru[2] + baru[3];
-    lai[i] = P.sla * daun[i] / 10000;
+    lai[i] = Math.max(0.02, P.sla * daun[i] / 10000); // lantai LAI agar kanopi tidak nol numerik
     residuBio[i] = (tot[i] - tot[i - 1]) - (Bnet - rmSum);
   }
 
@@ -349,6 +375,6 @@ function jalankan8Skenario(prep, params, tglTanam) {
 }
 
 if (typeof module !== "undefined" && module.exports) {
-  module.exports = { defaultParams, SCENARIOS, preprocessWeather, simulasiBuncis,
+  module.exports = { defaultParams, sanitizeParams, SCENARIOS, preprocessWeather, simulasiBuncis,
                      ringkasanSkenario, jalankan8Skenario, MISSING_TOKENS };
 }

@@ -9,6 +9,8 @@
   const ctx = cv.getContext("2d");
   const overlay = document.getElementById("intro");
   const chip = document.getElementById("phaseChip");
+  const tuChip = document.getElementById("tuChip");
+  let tuLast = -1;
   let W = 0, H = 0, dpr = 1, raf = 0, t0 = 0, running = false;
   let px = 0, py = 0, tx = 0, ty = 0;           // paralaks halus
   const drops = [], splash = [], pollen = [], stars = [];
@@ -84,7 +86,36 @@
     }
     ctx.globalAlpha = 1;
   }
-  function hills(k) {
+  function merapi(k, t) {
+    const cx = W * .60 + px * 6, base = H * .66, peak = H * .385, hw = W * .19;
+    ctx.fillStyle = mix("#151238", "#475569", .25 + .55 * k);
+    ctx.beginPath(); ctx.moveTo(cx - hw, base);
+    ctx.quadraticCurveTo(cx - hw * .38, peak + (base - peak) * .28, cx - hw * .10, peak);
+    ctx.lineTo(cx + hw * .06, peak + 6);
+    ctx.quadraticCurveTo(cx + hw * .42, peak + (base - peak) * .30, cx + hw, base);
+    ctx.closePath(); ctx.fill();
+    // kepulan asap tipis dari kawah
+    ctx.globalAlpha = .10 + .06 * k;
+    ctx.fillStyle = mix("#312E81", "#E2E8F0", k);
+    for (let i = 0; i < 3; i++) {
+      const sy = peak - 14 - i * 16 - Math.sin(t * .4 + i) * 4;
+      ctx.beginPath(); ctx.ellipse(cx + 4 + Math.sin(t * .3 + i * 2) * 8 + i * 7, sy, 16 + i * 9, 7 + i * 3, 0, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+  function mist(k, t) {
+    ctx.globalAlpha = .10 + .08 * k;
+    ctx.fillStyle = mix("#312E81", "#F1F5F9", k);
+    for (let i = 0; i < 2; i++) {
+      const y = H * (.60 + i * .075) + Math.sin(t * .25 + i * 2) * 5;
+      const x = ((t * .012 * (i + 1)) % 1.4 - .2) * W;
+      ctx.beginPath(); ctx.ellipse(x, y, W * .34, 10 + i * 5, 0, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(x - W * .55, y + 4, W * .28, 8 + i * 4, 0, 0, 7); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+  }
+  function hills(k, g, t) {
+    merapi(k, t);
     const layers = [["#14532D", .62, 26, .35], ["#1B4332", .70, 18, .6], ["#2D6A4F", .78, 12, 1]];
     for (const [col, yy, amp, par] of layers) {
       ctx.fillStyle = mix("#0B1F17", col, .35 + .65 * k);
@@ -95,6 +126,19 @@
       }
       ctx.lineTo(W + 40, H); ctx.fill();
     }
+    mist(k, t);
+    // garis kontur guludan pada lereng terdepan, tergambar mengikuti pertumbuhan
+    ctx.strokeStyle = `rgba(149,213,178,${.14 + .14 * k})`; ctx.lineWidth = 1.2;
+    ctx.setLineDash([W * 1.3 * g, W * 1.3]);
+    for (let j = 1; j <= 6; j++) {
+      ctx.beginPath();
+      for (let x = -40; x <= W + 40; x += 24) {
+        const y = H * .78 + Math.sin(x * .006 + .78 * 9) * 12 + Math.sin(x * .017) * 4.8 + j * 10 + px * 14 + py * 6;
+        x === -40 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
   }
   function soil(g, t) {
     const y0 = H * .82;
@@ -221,7 +265,7 @@
     px = lerp(px, tx, .05); py = lerp(py, ty, .05);
     const k = ease(clamp(t / 6.5, 0, 1));                 // fajar → siang
     const g = ease(clamp((t - 1.1) / 10.5, 0, 1));       // pertumbuhan
-    sky(k, t); sun(k, t); clouds(t, k); hills(k); soil(g, t);
+    sky(k, t); sun(k, t); clouds(t, k); hills(k, g, t); soil(g, t);
     plant(W * .24 + px * 10, g, t, 0, 1);
     plant(W * .78 + px * 10, clamp(g * 1.06 - .04, 0, 1), t, 2.1, .82);
     rain(t); motes(t, k);
@@ -231,11 +275,13 @@
     ctx.fillStyle = v; ctx.fillRect(0, 0, W, H);
     let pi = 0; for (let i = 0; i < PHASES.length; i++) if (g >= PHASES[i][0]) pi = i;
     if (pi !== phaseIdx) { phaseIdx = pi; chip.textContent = PHASES[pi][1]; }
+    const tu = Math.round(g * 972);
+    if (tu !== tuLast) { tuLast = tu; tuChip.textContent = `TU ${tu} / 972 °C·hari`; }
     raf = requestAnimationFrame(frame);
   }
   function show() {
     overlay.style.display = "block"; overlay.classList.remove("leave");
-    resize(); seed(); phaseIdx = -1; t0 = performance.now(); running = true;
+    resize(); seed(); phaseIdx = -1; tuLast = -1; t0 = performance.now(); running = true;
     cancelAnimationFrame(raf); raf = requestAnimationFrame(frame);
   }
   function hide() {
@@ -246,6 +292,11 @@
   window.addEventListener("resize", () => { if (running) resize(); });
   overlay.addEventListener("pointermove", e => {
     tx = (e.clientX / W - .5) * 2; ty = (e.clientY / H - .5) * 2;
+    const b = document.getElementById("btnEnter"), r = b.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    const d = Math.hypot(dx, dy), pull = Math.max(0, 1 - d / 320) * 10;
+    b.style.setProperty("--mx", (dx / (d || 1) * pull).toFixed(1) + "px");
+    b.style.setProperty("--my", (dy / (d || 1) * pull).toFixed(1) + "px");
   });
   document.getElementById("btnEnter").addEventListener("click", hide);
   document.getElementById("btnSkip").addEventListener("click", hide);
